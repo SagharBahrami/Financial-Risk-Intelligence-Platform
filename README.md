@@ -55,10 +55,34 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
 | Step | Command | Output |
 |---|---|---|
 | Ingest + validate | `python -m risk_platform.fraud.ingest` | `data/interim/fraud_baf.parquet` |
+| Features + time split | `python -m risk_platform.fraud.features` | `data/processed/fraud_{train,test}.parquet` |
+| Train + evaluate | `python -m risk_platform.fraud.train` | MLflow run in experiment `fraud` |
 
-Ingest reads the raw CSV, drops constant columns, sets categorical types, validates the data with a
-[pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
+- **Ingest** reads the raw CSV, drops constant columns, sets categorical types, validates the data with a
+  [pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
+- **Features** turns negative "missing" codes into NaN plus a `<column>_missing` flag, then splits by time:
+  months 0-5 for training, months 6-7 for testing.
+- **Train** fits a scikit-learn pipeline and logs parameters, metrics and the model to MLflow.
+
 Settings live in `configs/fraud.yaml`.
+
+### Results (test set: months 6-7)
+
+Metrics for imbalanced data: PR-AUC, and recall at 5% false-positive rate (as in the BAF paper).
+
+| Model | PR-AUC | ROC-AUC | Recall @ 5% FPR |
+|---|---|---|---|
+| Logistic regression (baseline) | 0.164 | 0.883 | 0.507 |
+
+## Experiment tracking
+
+Runs are stored in a local SQLite database (`mlflow.db`). To browse them:
+
+```powershell
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Then open http://127.0.0.1:5000.
 
 ## Tests
 

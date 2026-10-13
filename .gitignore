@@ -14,5 +14,6 @@ kaggle.json
 access_token
 
 # MLflow local runs
+mlflow.db
 mlruns/
 mlartifacts/

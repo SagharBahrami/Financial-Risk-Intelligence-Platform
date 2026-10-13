@@ -3,6 +3,8 @@
 data:
   raw_path: data/raw/fraud_baf/Base.csv
   interim_path: data/interim/fraud_baf.parquet
+  train_path: data/processed/fraud_train.parquet
+  test_path: data/processed/fraud_test.parquet
 
 target: fraud_bool
 time_column: month
@@ -16,3 +18,31 @@ categorical_columns:
 
 drop_columns:
   - device_fraud_count  # constant (always 0) in Base.csv
+
+features:
+  # Negative values in these columns mean "missing" (BAF datasheet)
+  missing_as_negative:
+    - prev_address_months_count
+    - current_address_months_count
+    - bank_months_count
+    - session_length_in_minutes
+    - device_distinct_emails_8w
+    - intended_balcon_amount
+
+# Time-based split: train on the past, test on the future (same as the BAF paper)
+split:
+  train_months: [0, 1, 2, 3, 4, 5]
+  test_months: [6, 7]
+
+evaluation:
+  max_fpr: 0.05  # report recall at 5% false-positive rate
+
+mlflow:
+  experiment: fraud
+
+model:
+  name: logistic_regression
+  params:
+    C: 1.0
+    class_weight: balanced
+    max_iter: 1000
