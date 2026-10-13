@@ -1,0 +1,27 @@
+[project]
+name = "risk-platform"
+version = "0.1.0"
+description = "Financial Risk Intelligence Platform: fraud detection, credit risk and AML models with shared MLOps infrastructure"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "pyarrow>=17.0",
+]
+
+[project.optional-dependencies]
+# Exploring data in notebooks
+eda = [
+    "jupyter>=1.0",
+    "ipykernel>=6.29",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
