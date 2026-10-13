@@ -1,0 +1,18 @@
+# Fraud detection - Bank Account Fraud (BAF) dataset
+
+data:
+  raw_path: data/raw/fraud_baf/Base.csv
+  interim_path: data/interim/fraud_baf.parquet
+
+target: fraud_bool
+time_column: month
+
+categorical_columns:
+  - payment_type
+  - employment_status
+  - housing_status
+  - source
+  - device_os
+
+drop_columns:
+  - device_fraud_count  # constant (always 0) in Base.csv

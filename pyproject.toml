@@ -8,9 +8,15 @@ dependencies = [
     "pandas>=2.2",
     "numpy>=2.0",
     "pyarrow>=17.0",
+    "pandera>=0.24",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+# Testing and code quality
+dev = [
+    "pytest>=8.0",
+]
 # Exploring data in notebooks
 eda = [
     "jupyter>=1.0",
@@ -25,3 +31,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

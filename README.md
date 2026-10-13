@@ -34,7 +34,7 @@ An end-to-end MLOps project with three machine learning use cases that share one
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[eda]"
+pip install -e ".[eda,dev]"
 pip install kaggle
 ```
 
@@ -47,3 +47,21 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
 ```
 
 (Unzip the Home Credit archive, and repeat the last command for the other `*-Small_*` AML files.)
+
+## Pipeline
+
+### Fraud detection
+
+| Step | Command | Output |
+|---|---|---|
+| Ingest + validate | `python -m risk_platform.fraud.ingest` | `data/interim/fraud_baf.parquet` |
+
+Ingest reads the raw CSV, drops constant columns, sets categorical types, validates the data with a
+[pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
+Settings live in `configs/fraud.yaml`.
+
+## Tests
+
+```powershell
+pytest
+```
