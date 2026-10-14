@@ -1,6 +1,9 @@
-"""Build features from the interim BAF data and split it by time into train and test sets.
+"""Feature functions for BAF, and the time-based train/test split.
 
-Run with:  python -m risk_platform.fraud.features
+The feature transformations are applied inside the model pipeline (see models.py), not here,
+so the model takes raw application data and training and serving run exactly the same code.
+
+Run with:  python -m risk_platform.fraud.features   (writes the train and test files)
 """
 import logging
 from typing import Any
@@ -33,21 +36,14 @@ def time_split(
     return train, test
 
 
-def build_features(df: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
-    return add_missing_flags(df, config["features"]["missing_as_negative"])
-
-
 def run(config: dict[str, Any]) -> None:
     df = pd.read_parquet(resolve_path(config["data"]["interim_path"]))
-    df = build_features(df, config)
 
     split = config["split"]
     train, test = time_split(df, config["time_column"], split["train_months"], split["test_months"])
     target = config["target"]
     for name, part in [("train", train), ("test", test)]:
         logger.info("%s: %d rows, fraud rate %.2f%%", name, len(part), 100 * part[target].mean())
-
-    for name, part in [("train", train), ("test", test)]:
         path = resolve_path(config["data"][f"{name}_path"])
         path.parent.mkdir(parents=True, exist_ok=True)
         part.to_parquet(path, index=False)

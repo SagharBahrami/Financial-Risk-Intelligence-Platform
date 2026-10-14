@@ -55,26 +55,39 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
 | Step | Command | Output |
 |---|---|---|
 | Ingest + validate | `python -m risk_platform.fraud.ingest` | `data/interim/fraud_baf.parquet` |
-| Features + time split | `python -m risk_platform.fraud.features` | `data/processed/fraud_{train,test}.parquet` |
-| Train + evaluate | `python -m risk_platform.fraud.train` | MLflow run in experiment `fraud` |
+| Time split | `python -m risk_platform.fraud.features` | `data/processed/fraud_{train,test}.parquet` |
+| Tune (optional) | `python -m risk_platform.fraud.tune --model lightgbm` | best params, nested MLflow runs |
+| Train + evaluate | `python -m risk_platform.fraud.train --model lightgbm` | MLflow run in experiment `fraud` |
+| Register | `python -m risk_platform.fraud.register` | new version of `fraud-detector` in the Model Registry |
 
 - **Ingest** reads the raw CSV, drops constant columns, sets categorical types, validates the data with a
   [pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
-- **Features** turns negative "missing" codes into NaN plus a `<column>_missing` flag, then splits by time:
-  months 0-5 for training, months 6-7 for testing.
-- **Train** fits a scikit-learn pipeline and logs parameters, metrics and the model to MLflow.
+- **Time split** uses months 0-5 for training and months 6-7 for testing.
+- **Tune** searches hyperparameters with Optuna, training on months 0-4 and validating on month 5,
+  so the test months stay unseen.
+- **Train** fits a full scikit-learn pipeline and logs parameters, metrics, a precision-recall curve and the
+  model to MLflow. Models: `logistic_regression`, `lightgbm`, `xgboost` (`src/risk_platform/fraud/models.py`).
+- **Register** picks the best training run, registers its model as a new version, and moves the `champion`
+  alias to it only if it beats the current champion.
+
+Each model is one pipeline from **raw application data** to a fraud probability: feature engineering
+(negative "missing" codes → NaN + `<column>_missing` flags) and categorical encoding happen inside the
+pipeline. Training and serving therefore run exactly the same code.
 
 Settings live in `configs/fraud.yaml`.
 
 ### Results (test set: months 6-7)
 
 Metrics for imbalanced data: PR-AUC, and recall at 5% false-positive rate (as in the BAF paper).
+Random guessing gives a PR-AUC of about 0.014 (the fraud rate).
 
 | Model | PR-AUC | ROC-AUC | Recall @ 5% FPR |
 |---|---|---|---|
 | Logistic regression (baseline) | 0.164 | 0.883 | 0.507 |
+| LightGBM (default params) | 0.186 | 0.889 | **0.536** |
+| XGBoost (default params) | 0.187 | 0.892 | 0.528 |
 
-## Experiment tracking
+## Experiment tracking and model versioning
 
 Runs are stored in a local SQLite database (`mlflow.db`). To browse them:
 
@@ -83,6 +96,16 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
 Then open http://127.0.0.1:5000.
+
+Registered models live in the MLflow Model Registry. The alias `champion` always points to the version used
+in production, so serving code loads the model without a version number:
+
+```python
+import mlflow
+
+model = mlflow.pyfunc.load_model("models:/fraud-detector@champion")
+proba = model.predict(applications_df)[:, 1]  # fraud probability per application
+```
 
 ## Tests
 

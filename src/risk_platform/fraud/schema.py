@@ -11,6 +11,14 @@ HOUSING_STATUSES = ["BA", "BB", "BC", "BD", "BE", "BF", "BG"]
 SOURCES = ["INTERNET", "TELEAPP"]
 DEVICE_OS = ["linux", "macintosh", "other", "windows", "x11"]
 
+CATEGORIES = {
+    "payment_type": PAYMENT_TYPES,
+    "employment_status": EMPLOYMENT_STATUSES,
+    "housing_status": HOUSING_STATUSES,
+    "source": SOURCES,
+    "device_os": DEVICE_OS,
+}
+
 binary = Check.isin([0, 1])
 count_or_missing = Check.ge(-1)  # -1 = missing
 non_negative = Check.ge(0)
