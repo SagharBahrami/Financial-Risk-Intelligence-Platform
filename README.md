@@ -65,7 +65,9 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
   [pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
 - **Time split** uses months 0-5 for training and months 6-7 for testing.
 - **Tune** searches hyperparameters with Optuna, training on months 0-4 and validating on month 5,
-  so the test months stay unseen.
+  so the test months stay unseen. It combines a TPE sampler (Bayesian optimization) with a Hyperband
+  pruner: every 100 boosting rounds a trial reports its validation score, and clearly weaker trials are
+  stopped early. Every trial, pruned or not, is logged as a nested MLflow run.
 - **Train** fits a full scikit-learn pipeline and logs parameters, metrics, a precision-recall curve and the
   model to MLflow. Models: `logistic_regression`, `lightgbm`, `xgboost` (`src/risk_platform/fraud/models.py`).
 - **Evaluate** loads a candidate model and the current champion the same way serving does, scores both on the

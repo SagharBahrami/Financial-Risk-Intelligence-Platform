@@ -81,3 +81,4 @@ tuning:
   validation_months: [5]  # last training month; test months stay unseen
   metric: recall_at_5pct_fpr
   n_trials: 30
+  report_every: 100  # boosting rounds between pruning checks (Hyperband)
