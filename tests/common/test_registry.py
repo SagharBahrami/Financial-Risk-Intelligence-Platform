@@ -2,7 +2,13 @@ import mlflow
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-from risk_platform.common.registry import CHAMPION, get_champion, register_and_promote
+from risk_platform.common.registry import (
+    CHALLENGER,
+    CHAMPION,
+    get_champion,
+    get_version_by_alias,
+    register_and_promote,
+)
 from risk_platform.common.tracking import log_sklearn_model
 
 NAME = "test-model"
@@ -31,6 +37,7 @@ def test_worse_version_does_not_replace_champion(local_mlflow):
 
     assert not promoted
     assert get_champion(NAME).version == first.version
+    assert get_version_by_alias(NAME, CHALLENGER).version == second.version
 
 
 def test_better_version_replaces_champion(local_mlflow):

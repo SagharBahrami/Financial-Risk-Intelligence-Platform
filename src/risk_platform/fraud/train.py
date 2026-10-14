@@ -52,7 +52,7 @@ def run(config: dict[str, Any], model_name: str) -> dict[str, float]:
         for name, value in metrics.items():
             logger.info("%s = %.4f", name, value)
 
-        mlflow.log_figure(pr_curve_figure(y_test, scores, model_name), "pr_curve.png")
+        mlflow.log_figure(pr_curve_figure(y_test, {model_name: scores}), "pr_curve.png")
         log_sklearn_model(pipeline, X_test)
     return metrics
 

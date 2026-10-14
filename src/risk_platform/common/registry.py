@@ -1,8 +1,10 @@
 """Model versioning with the MLflow Model Registry, shared by all use cases.
 
-Each registered version points to the model of one training run. The alias "champion" marks
-the version to use in production, so serving code loads "models:/<name>@champion" and never
-needs a version number. A new version only becomes champion if it beats the current one.
+Each registered version points to the model of one training run. Two aliases mark its role:
+- "champion"   the version used in production; serving code loads "models:/<name>@champion"
+- "challenger" the newest candidate that did not beat the champion (yet)
+
+A new version is registered as challenger and only becomes champion if its metric is better.
 """
 import logging
 
@@ -14,13 +16,18 @@ from mlflow.exceptions import MlflowException
 logger = logging.getLogger(__name__)
 
 CHAMPION = "champion"
+CHALLENGER = "challenger"
+
+
+def get_version_by_alias(name: str, alias: str) -> ModelVersion | None:
+    try:
+        return MlflowClient().get_model_version_by_alias(name, alias)
+    except MlflowException:
+        return None  # model or alias does not exist yet
 
 
 def get_champion(name: str) -> ModelVersion | None:
-    try:
-        return MlflowClient().get_model_version_by_alias(name, CHAMPION)
-    except MlflowException:
-        return None  # model or alias does not exist yet
+    return get_version_by_alias(name, CHAMPION)
 
 
 def register_and_promote(
@@ -53,7 +60,11 @@ def register_and_promote(
 
     if promoted:
         client.set_registered_model_alias(name, CHAMPION, version.version)
+        challenger = get_version_by_alias(name, CHALLENGER)
+        if challenger is not None and challenger.version == version.version:
+            client.delete_registered_model_alias(name, CHALLENGER)
         logger.info("v%s is the new champion", version.version)
     else:
-        logger.info("v%s is not better than the champion; champion unchanged", version.version)
+        client.set_registered_model_alias(name, CHALLENGER, version.version)
+        logger.info("v%s is not better than the champion; registered as challenger", version.version)
     return version, promoted

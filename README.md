@@ -58,7 +58,8 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
 | Time split | `python -m risk_platform.fraud.features` | `data/processed/fraud_{train,test}.parquet` |
 | Tune (optional) | `python -m risk_platform.fraud.tune --model lightgbm` | best params, nested MLflow runs |
 | Train + evaluate | `python -m risk_platform.fraud.train --model lightgbm` | MLflow run in experiment `fraud` |
-| Register | `python -m risk_platform.fraud.register` | new version of `fraud-detector` in the Model Registry |
+| Evaluate vs. champion | `python -m risk_platform.fraud.evaluate --run-id <id>` | comparison run `evaluate_<model>` |
+| Register | `python -m risk_platform.fraud.register --run-id <id>` | new version of `fraud-detector` in the Model Registry |
 
 - **Ingest** reads the raw CSV, drops constant columns, sets categorical types, validates the data with a
   [pandera](https://pandera.readthedocs.io/) schema (`src/risk_platform/fraud/schema.py`) and saves it as Parquet.
@@ -67,8 +68,10 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
   so the test months stay unseen.
 - **Train** fits a full scikit-learn pipeline and logs parameters, metrics, a precision-recall curve and the
   model to MLflow. Models: `logistic_regression`, `lightgbm`, `xgboost` (`src/risk_platform/fraud/models.py`).
-- **Register** picks the best training run, registers its model as a new version, and moves the `champion`
-  alias to it only if it beats the current champion.
+- **Evaluate** loads a candidate model and the current champion the same way serving does, scores both on the
+  test months and logs the comparison (metrics, deltas, overlaid PR curves) as its own MLflow run.
+- **Register** registers a training run's model (or the best run, without `--run-id`) as a new version.
+  It becomes `champion` only if it beats the current champion; otherwise it is marked `challenger`.
 
 Each model is one pipeline from **raw application data** to a fraud probability: feature engineering
 (negative "missing" codes → NaN + `<column>_missing` flags) and categorical encoding happen inside the
@@ -97,8 +100,15 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 Then open http://127.0.0.1:5000.
 
-Registered models live in the MLflow Model Registry. The alias `champion` always points to the version used
-in production, so serving code loads the model without a version number:
+Registered models live in the MLflow Model Registry. Every training, tuning and evaluation run is kept.
+
+| Version | Model | Recall @ 5% FPR | Alias |
+|---|---|---|---|
+| v1 | Logistic regression (baseline) | 0.507 | |
+| v2 | XGBoost | 0.528 | `champion` |
+
+The alias `champion` always points to the version used in production, so serving code loads the model
+without a version number:
 
 ```python
 import mlflow
