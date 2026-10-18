@@ -1,10 +1,12 @@
-"""Tune model hyperparameters with Optuna on a validation month taken from the training period.
+"""Tune model hyperparameters with Optuna: fit on months 0-3, validate on month 4.
 
 - Search: TPE sampler (Bayesian optimization; the first trials are random).
 - Pruning: Hyperband. Every few boosting rounds the trial reports its validation score;
   trials that look clearly worse than earlier ones are stopped early to save time.
-- The test months (6-7) are never used here.
+- Month 5 (calibration and threshold, see train.py) and the test months (6-7) are never used here.
 - Every trial, including pruned ones, is logged to MLflow as a nested run.
+- The best hyperparameters are saved as best_params.json in the parent run, so train.py can
+  refit the model with them:  python -m risk_platform.fraud.train --tune-run-id <id>
 
 Run with:  python -m risk_platform.fraud.tune --model lightgbm --trials 30
 """
@@ -41,13 +43,22 @@ def fit_with_pruning(pipeline, model_name: str, trial: optuna.Trial, X_fit, y_fi
     raise ValueError(f"No pruning support for model '{model_name}'")
 
 
+def check_months(config: dict[str, Any]) -> None:
+    """Tuning must not see the months used later to calibrate the model or to test it."""
+    tuning_months = set(config["tuning"]["fit_months"]) | set(config["tuning"]["validation_months"])
+    held_out = set(config["training"]["calibration_months"]) | set(config["split"]["test_months"])
+    if tuning_months & held_out:
+        raise ValueError(f"Tuning uses held-out months: {sorted(tuning_months & held_out)}")
+
+
 def run(config: dict[str, Any], model_name: str, n_trials: int) -> dict[str, Any]:
+    check_months(config)
     tuning = config["tuning"]
     max_fpr = config["evaluation"]["max_fpr"]
     metric = tuning["metric"]
+    fit_months = tuning["fit_months"]
 
     train = pd.read_parquet(resolve_path(config["data"]["train_path"]))
-    fit_months = [m for m in config["split"]["train_months"] if m not in tuning["validation_months"]]
     fit_df, val_df = time_split(train, config["time_column"], fit_months, tuning["validation_months"])
     X_fit, y_fit = split_xy(fit_df, config)
     X_val, y_val = split_xy(val_df, config)
@@ -73,7 +84,7 @@ def run(config: dict[str, Any], model_name: str, n_trials: int) -> dict[str, Any
         return metrics[metric]
 
     setup_mlflow(config["mlflow"]["experiment"])
-    with mlflow.start_run(run_name=f"tune_{model_name}"):
+    with mlflow.start_run(run_name=f"tune_{model_name}") as parent:
         mlflow.log_params({
             "model": model_name,
             "n_trials": n_trials,
@@ -93,13 +104,17 @@ def run(config: dict[str, Any], model_name: str, n_trials: int) -> dict[str, Any
         study.optimize(objective, n_trials=n_trials)
 
         n_pruned = sum(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+        # study.best_params only has the searched values; rebuild the full set incl. fixed ones
+        best_params = SEARCH_SPACES[model_name](optuna.trial.FixedTrial(study.best_params))
         mlflow.log_params({f"best_{k}": v for k, v in study.best_params.items()})
         mlflow.log_metrics({f"best_val_{metric}": study.best_value, "n_pruned_trials": n_pruned})
+        mlflow.log_dict({"model": model_name, "params": best_params}, "best_params.json")
 
     logger.info("Pruned %d of %d trials", n_pruned, n_trials)
     logger.info("Best trial: %d, validation %s = %.4f", study.best_trial.number, metric, study.best_value)
-    logger.info("Best params (copy into configs/fraud.yaml):\n%s", yaml.safe_dump(study.best_params, sort_keys=False))
-    return study.best_params
+    logger.info("Best params:\n%s", yaml.safe_dump(best_params, sort_keys=False))
+    logger.info("Refit with:  python -m risk_platform.fraud.train --tune-run-id %s", parent.info.run_id)
+    return best_params
 
 
 def main() -> None:

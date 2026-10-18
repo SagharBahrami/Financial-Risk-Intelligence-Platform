@@ -30,12 +30,24 @@ features:
     - intended_balcon_amount
 
 # Time-based split: train on the past, test on the future (same as the BAF paper)
+#   months 0-3  fit models while tuning          (tune.py)
+#   month  4    choose hyperparameters           (tune.py)
+#   months 0-4  refit the final model            (train.py)
+#   month  5    fit the calibrator, choose the decision threshold  (train.py)
+#   months 6-7  final test of the frozen model, never used for any choice
 split:
-  train_months: [0, 1, 2, 3, 4, 5]
-  test_months: [6, 7]
+  train_months: [0, 1, 2, 3, 4, 5]  # saved to fraud_train.parquet and split further below
+  test_months: [6, 7]               # saved to fraud_test.parquet
 
 evaluation:
-  max_fpr: 0.05  # report recall at 5% false-positive rate
+  max_fpr: 0.05  # the decision threshold gives the highest recall with at most 5% false positives
+
+# Final model (src/risk_platform/fraud/train.py)
+training:
+  fit_months: [0, 1, 2, 3, 4]
+  calibration_months: [5]
+  calibration_method: sigmoid               # sigmoid (Platt scaling) or isotonic
+  compare_methods: [sigmoid, isotonic]      # compared by cross-validation on the calibration months
 
 mlflow:
   experiment: fraud
@@ -78,7 +90,8 @@ models:
 
 # Hyperparameter search with Optuna (src/risk_platform/fraud/tune.py)
 tuning:
-  validation_months: [5]  # last training month; test months stay unseen
+  fit_months: [0, 1, 2, 3]
+  validation_months: [4]  # calibration and test months stay unseen
   metric: recall_at_5pct_fpr
   n_trials: 30
   report_every: 100  # boosting rounds between pruning checks (Hyperband)

@@ -1,3 +1,6 @@
+import copy
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -55,3 +58,34 @@ def interim_baf(raw_baf, fraud_config) -> pd.DataFrame:
     from risk_platform.fraud.ingest import clean
 
     return clean(raw_baf, fraud_config["drop_columns"], fraud_config["categorical_columns"])
+
+
+@pytest.fixture
+def baf_files(raw_baf, fraud_config, tmp_path) -> dict:
+    """Synthetic BAF data for months 0-7, saved as train and test files the way features.py does.
+
+    Fraud is more likely for high income, so a model can learn something. Returns a copy of the
+    fraud config that points to these files and uses small, fast models.
+    """
+    from risk_platform.fraud.features import time_split
+    from risk_platform.fraud.ingest import clean
+
+    rng = np.random.default_rng(0)
+    rows_per_month = 200
+    df = raw_baf.sample(8 * rows_per_month, replace=True, random_state=0).reset_index(drop=True)
+    df["month"] = np.repeat(np.arange(8), rows_per_month)
+    df["income"] = rng.uniform(0, 1, len(df))
+    df["fraud_bool"] = (rng.uniform(size=len(df)) < 0.02 + 0.4 * df["income"] ** 4).astype(int)
+
+    config = copy.deepcopy(fraud_config)
+    df = clean(df, config["drop_columns"], config["categorical_columns"])
+    train, test = time_split(df, config["time_column"], config["split"]["train_months"], config["split"]["test_months"])
+    for name, part in [("train", train), ("test", test)]:
+        path = tmp_path / f"fraud_{name}.parquet"
+        part.to_parquet(path, index=False)
+        config["data"][f"{name}_path"] = str(path)
+
+    config["models"]["lightgbm"]["n_estimators"] = 20
+    config["models"]["xgboost"]["n_estimators"] = 20
+    config["tuning"]["report_every"] = 50
+    return config

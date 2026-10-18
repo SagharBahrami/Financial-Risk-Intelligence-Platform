@@ -22,7 +22,7 @@ def setup_mlflow(experiment: str) -> None:
     mlflow.set_experiment(experiment)
 
 
-def log_sklearn_model(model, X_example: pd.DataFrame) -> ModelInfo:
+def log_sklearn_model(model, X_example: pd.DataFrame, metadata: dict | None = None) -> ModelInfo:
     """Log a fitted scikit-learn classifier pipeline to the active MLflow run.
 
     - When loaded for serving (mlflow.pyfunc), the model returns class probabilities
@@ -30,6 +30,8 @@ def log_sklearn_model(model, X_example: pd.DataFrame) -> ModelInfo:
     - MLflow saves sklearn models with skops, which only loads object types marked as trusted.
       The pipeline was built by this project's code, so the types it contains are trusted.
     - The model URI is saved as the run tag "model_uri", so the run's model can be registered later.
+    - `metadata` (e.g. the decision threshold) is saved with the model; after loading with
+      mlflow.pyfunc it is available as model.metadata.metadata.
     """
     example = X_example.head(5)
     trusted_types = sio.get_untrusted_types(data=sio.dumps(model))
@@ -40,6 +42,7 @@ def log_sklearn_model(model, X_example: pd.DataFrame) -> ModelInfo:
         input_example=example,
         pyfunc_predict_fn="predict_proba",
         skops_trusted_types=trusted_types,
+        metadata=metadata,
     )
     mlflow.set_tag("model_uri", info.model_uri)
     return info
