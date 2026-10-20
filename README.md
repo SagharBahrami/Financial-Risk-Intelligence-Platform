@@ -175,6 +175,37 @@ Recall @ 5% FPR before calibration, so calibration cannot affect it:
 Decision: I keep the unweighted pipeline. Weighting adds a parameter and distorts the raw probabilities
 without improving the ranking.
 
+### Evaluation protocol and frozen final model
+
+Rules I follow from now on:
+1. Months 6-7 stay as an inspected holdout. I report their results and do not use them to choose between models,
+   calibration methods, class weights or thresholds.
+2. Every choice (model, calibration method, threshold, champion) uses month 5, with the same rule each time.
+3. If new data becomes available, it is used once, for a final independent assessment.
+
+How optimistic is the month-5 selection? The pipelines are frozen (fit on months 0-4), so only the threshold is
+chosen on month 5. I chose it on 4/5 of month 5 and applied it to the other 1/5 (5-fold, repeated 5 times):
+
+| Model | FPR in-sample | FPR out-of-fold | Recall in-sample | Recall out-of-fold (sd) |
+|---|---|---|---|---|
+| XGBoost | 4.97% | 4.98% | 0.534 | 0.534 (0.029) |
+| LightGBM | 5.00% | 4.98% | 0.531 | 0.529 (0.028) |
+| Logistic regression | 4.96% | 4.97% | 0.510 | 0.510 (0.023) |
+
+Choosing the threshold on month 5 therefore adds almost no optimism inside month 5 (about 0.1 points of recall).
+The FPR of 5.6-5.9% on months 6-7 is not caused by this; it comes from month 5 and months 6-7 being different. I did
+not test whether that is drift or ordinary variation between months.
+
+Model comparison on month 5 (paired bootstrap, 300 resamples of the rows, recall at 5% FPR):
+- XGBoost - LightGBM: +0.004, 95% interval [-0.009, +0.016]. This is a tie; XGBoost was better in 71% of resamples.
+  XGBoost is champion because of the selection rule, not because it is clearly better.
+- XGBoost and LightGBM - logistic regression: about +0.02, intervals above zero. The tree models are better.
+
+Frozen final model (registry `fraud-detector` v3, alias `champion`): XGBoost with the default hyperparameters in
+`configs/fraud.yaml`, fit on months 0-4, no calibration (chosen on month 5), decision threshold 0.0297 (saved in the
+model metadata), run `0b4ff926f3a14a08b30e14cd5b7e09c1`. I do not change it unless new validation data justifies a
+new version; a retrained model is a new version and goes through the same month-5 rule.
+
 ## Experiment tracking and model versioning
 
 Runs are stored in a local SQLite database (`mlflow.db`). To browse them:
