@@ -187,10 +187,31 @@ Then open http://127.0.0.1:5000.
 
 Registered models live in the MLflow Model Registry. Every training, tuning and evaluation run is kept.
 
-| Version | Model | Recall @ 5% FPR | Alias |
-|---|---|---|---|
-| v1 | Logistic regression (baseline) | 0.507 | |
-| v2 | XGBoost | 0.528 | `champion` |
+| Version | Model | Selected on | Recall @ 5% FPR | Alias |
+|---|---|---|---|---|
+| v1 | Logistic regression (baseline) | test months 6-7 | 0.507 (test) | |
+| v2 | XGBoost, fit on months 0-5 | test months 6-7 | 0.528 (test) | historical |
+| v3 | XGBoost, fit on months 0-4, no calibration | month 5 | 0.534 (month 5) | `champion` |
+
+The two metrics are not comparable: v1 and v2 show recall on the test months, v3 on month 5.
+
+Why the champion changed (2026-10-19): v2 was chosen with the test months, and month 5 was part of its fitting
+data, so it cannot be compared on month 5. v3 follows the updated evaluation protocol: fit on months 0-4,
+calibration method and decision threshold (0.0297) chosen on month 5, and selected by recall at 5% FPR on month 5.
+The old champion had no month-5 metric, so I promoted v3 by hand (`register --promote`). v1 and v2 stay in the
+registry as history, and the reason is written in their descriptions and tags.
+XGBoost won on month 5 by only 0.36 points over LightGBM (0.5344 vs 0.5308), so this is a protocol-based choice,
+not strong evidence that it is better. Before promoting, I checked the saved threshold, the calibration method
+and the serving behavior: the metadata matches the run, the model loads through `mlflow.pyfunc`, JSON-style
+input gives identical scores, and the saved threshold gives 4.97% false positives on month 5 (the month it was
+chosen on, so this checks the behavior, not the performance).
+
+No model was fitted on the test months 6-7, so there is no leakage into training. But I reused them: they were used
+to compare and choose v1 and v2, and what I saw there influenced later design decisions (test-set reuse, a form of
+selection bias). Their results are therefore somewhat optimistic and not an independent estimate of future
+performance. Month 5 has the same problem on a smaller scale, because it was used to choose the calibration method,
+the threshold and the champion. A stronger assessment needs new data from after month 7 or another dataset, which
+the BAF files do not contain.
 
 The alias `champion` always points to the version used in production, so serving code loads the model
 without a version number:
@@ -199,11 +220,12 @@ without a version number:
 import mlflow
 
 model = mlflow.pyfunc.load_model("models:/fraud-detector@champion")
-proba = model.predict(applications_df)[:, 1]  # calibrated fraud probability per application
+proba = model.predict(applications_df)[:, 1]  # fraud probability per application (calibration method: see metadata)
 is_fraud = proba >= model.metadata.metadata["decision_threshold"]
 ```
 
-(Versions v1 and v2 were trained before calibration was added and have no `decision_threshold`.)
+(Versions v1 and v2 were trained before calibration was added and have no `decision_threshold`;
+the champion, v3, carries `decision_threshold` and `calibration_method` in its metadata.)
 
 ## Tests
 
