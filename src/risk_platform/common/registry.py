@@ -5,6 +5,8 @@ Each registered version points to the model of one training run. Two aliases mar
 - "challenger" the newest candidate that did not beat the champion (yet)
 
 A new version is registered as challenger and only becomes champion if its metric is better.
+If the champion has no value for the metric (it was registered when another metric was used),
+the two cannot be compared: the new version stays challenger unless promotion is forced.
 """
 import logging
 
@@ -31,9 +33,17 @@ def get_champion(name: str) -> ModelVersion | None:
 
 
 def register_and_promote(
-    name: str, run_id: str, model_uri: str, metric: str, value: float, higher_is_better: bool = True
+    name: str,
+    run_id: str,
+    model_uri: str,
+    metric: str,
+    value: float,
+    higher_is_better: bool = True,
+    force: bool = False,
 ) -> tuple[ModelVersion, bool]:
     """Register the model of a run as a new version and make it champion if its metric is better.
+
+    force=True makes it champion without comparing.
 
     Returns (version, promoted).
     """
@@ -51,8 +61,14 @@ def register_and_promote(
     if champion is not None and champion.version == version.version:
         return version, False
 
-    if champion is None:
+    if champion is None or force:
         promoted = True
+    elif metric not in champion.tags:
+        promoted = False
+        logger.warning(
+            "Champion v%s has no %s value, so it cannot be compared; promote with force=True if intended",
+            champion.version, metric,
+        )
     else:
         champion_value = float(champion.tags[metric])
         promoted = value > champion_value if higher_is_better else value < champion_value

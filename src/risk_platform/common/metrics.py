@@ -33,15 +33,18 @@ def brier_skill_score(y_true, y_score) -> float:
 
 
 def evaluate_binary(y_true, y_score, max_fpr: float = 0.05) -> dict[str, float]:
-    recall, threshold = recall_at_fpr(y_true, y_score, max_fpr)
-    pct = round(max_fpr * 100)
+    """Threshold-free metrics: how well the scores rank cases, and how good they are as probabilities.
+
+    recall_at_<pct>pct_fpr uses the best threshold for this data, so it measures ranking quality,
+    not the decisions of a deployed model; use evaluate_at_threshold() with a frozen threshold for that.
+    """
+    recall, _ = recall_at_fpr(y_true, y_score, max_fpr)
     return {
         "pr_auc": float(average_precision_score(y_true, y_score)),
         "roc_auc": float(roc_auc_score(y_true, y_score)),
         "brier": float(brier_score_loss(y_true, y_score)),
         "brier_skill": brier_skill_score(y_true, y_score),
-        f"recall_at_{pct}pct_fpr": recall,
-        f"threshold_at_{pct}pct_fpr": threshold,
+        f"recall_at_{round(max_fpr * 100)}pct_fpr": recall,
     }
 
 

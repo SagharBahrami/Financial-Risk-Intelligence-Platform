@@ -61,3 +61,22 @@ def test_champion_can_be_loaded_by_alias(local_mlflow):
     model = mlflow.pyfunc.load_model(f"models:/{NAME}@{CHAMPION}")
     proba = model.predict(pd.DataFrame({"x": [3.0]}))
     assert proba[0, 1] > 0.5
+
+
+def test_champion_without_the_metric_is_not_replaced(local_mlflow):
+    """A champion registered with another selection metric cannot be compared with the new one."""
+    old, _ = register_and_promote(NAME, *train_and_log(), "old_metric", 0.50)
+    new, promoted = register_and_promote(NAME, *train_and_log(), METRIC, 0.90)
+
+    assert not promoted
+    assert get_champion(NAME).version == old.version
+    assert get_version_by_alias(NAME, CHALLENGER).version == new.version
+
+
+def test_forced_promotion_replaces_champion(local_mlflow):
+    register_and_promote(NAME, *train_and_log(), "old_metric", 0.50)
+    new, promoted = register_and_promote(NAME, *train_and_log(), METRIC, 0.10, force=True)
+
+    assert promoted
+    assert get_champion(NAME).version == new.version
+    assert get_version_by_alias(NAME, CHALLENGER) is None

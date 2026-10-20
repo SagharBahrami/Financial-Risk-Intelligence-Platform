@@ -5,7 +5,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss
 
-from risk_platform.common.calibration import calibrate, compare_methods, with_threshold
+from risk_platform.common.calibration import best_method, calibrate, compare_methods, with_threshold
 from risk_platform.common.tracking import log_sklearn_model
 
 
@@ -47,9 +47,64 @@ def test_unknown_method_fails(overconfident):
         calibrate(overconfident, *make_data(100, seed=1), method="beta")
 
 
+def test_none_keeps_the_model(overconfident):
+    assert calibrate(overconfident, *make_data(100, seed=1), method="none") is overconfident
+
+
 def test_compare_methods_reports_each_method(overconfident):
     results = compare_methods(overconfident, *make_data(2000, seed=1))
-    assert set(results) == {"cv_sigmoid_brier", "cv_sigmoid_brier_skill", "cv_isotonic_brier", "cv_isotonic_brier_skill"}
+    assert set(results) == {"none", "sigmoid", "isotonic"}
+    assert all({"brier", "brier_skill", "recall_at_5pct_fpr"} <= set(values) for values in results.values())
+
+
+def test_overconfident_model_needs_calibration(overconfident):
+    # a larger sample: with ~100 positives, one case moves recall by a full point and the choice is noise
+    results = compare_methods(overconfident, *make_data(20000, seed=1))
+    assert results["none"]["brier_skill"] < 0
+    assert best_method(results) != "none"
+
+
+def result(brier: float, recall: float, brier_skill: float = 0.09) -> dict[str, float]:
+    return {"brier": brier, "brier_skill": brier_skill, "recall_at_5pct_fpr": recall}
+
+
+def test_best_method_has_lowest_brier_when_ranking_is_kept():
+    results = {"none": result(0.0106, 0.530), "sigmoid": result(0.0111, 0.531), "isotonic": result(0.0105, 0.528)}
+    assert best_method(results) == "isotonic"
+
+
+def test_best_method_rejects_methods_that_lose_ranking():
+    # the lightgbm and xgboost month-5 numbers: isotonic has the best Brier but loses about 1 point of recall
+    lightgbm = {"none": result(0.0107, 0.5308), "sigmoid": result(0.0106, 0.5294), "isotonic": result(0.0106, 0.5195)}
+    xgboost = {"none": result(0.0106, 0.5344), "sigmoid": result(0.0111, 0.5337), "isotonic": result(0.0106, 0.5259)}
+    assert best_method(lightgbm) == "sigmoid"
+    assert best_method(xgboost) == "none"
+
+
+def test_best_method_tolerance_is_adjustable():
+    results = {"none": result(0.0106, 0.5344), "isotonic": result(0.0105, 0.5259)}
+    assert best_method(results, max_recall_loss=0.005) == "none"
+    assert best_method(results, max_recall_loss=0.01) == "isotonic"
+
+
+def test_best_method_never_leaves_a_worse_than_base_rate_model_uncalibrated():
+    # few frauds: recall is noisy and sigmoid "loses" 0.8 points, but "none" is far worse than the base rate
+    results = {
+        "none": result(0.1327, 0.5372, brier_skill=-8.0),
+        "sigmoid": result(0.0426, 0.5289),
+        "isotonic": result(0.0431, 0.4545),
+    }
+    assert best_method(results) == "sigmoid"
+
+
+def test_best_method_falls_back_to_lowest_brier_when_no_method_beats_the_base_rate():
+    results = {"none": result(0.30, 0.5, brier_skill=-3.0), "sigmoid": result(0.20, 0.5, brier_skill=-1.0)}
+    assert best_method(results) == "sigmoid"
+
+
+def test_best_method_without_none_uses_the_best_recall_as_reference():
+    results = {"sigmoid": result(0.0111, 0.5337), "isotonic": result(0.0105, 0.5259)}
+    assert best_method(results) == "sigmoid"
 
 
 def test_threshold_decides_and_keeps_calibrated_probabilities(overconfident):

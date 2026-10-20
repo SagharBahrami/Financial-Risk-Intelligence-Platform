@@ -46,8 +46,12 @@ evaluation:
 training:
   fit_months: [0, 1, 2, 3, 4]
   calibration_months: [5]
-  calibration_method: sigmoid               # sigmoid (Platt scaling) or isotonic
-  compare_methods: [sigmoid, isotonic]      # compared by cross-validation on the calibration months
+  calibration_method: auto                       # none, sigmoid (Platt scaling), isotonic, or auto:
+                                                 # the lowest out-of-fold Brier score on the calibration months
+                                                 # among methods that keep the ranking (max_recall_loss)
+  compare_methods: [none, sigmoid, isotonic]     # compared by cross-validation on the calibration months
+  max_recall_loss: 0.005                         # auto: a method may lose at most this much recall at the FPR
+                                                 # limit compared with "none" (0.005 = half a percentage point)
 
 mlflow:
   experiment: fraud
@@ -55,7 +59,10 @@ mlflow:
 # Model versioning (src/risk_platform/fraud/register.py)
 registry:
   model_name: fraud-detector
-  metric: recall_at_5pct_fpr  # a new version becomes "champion" only if this is higher
+  # A new version becomes "champion" only if this is higher. Measured on month 5 before calibration
+  # (nothing is fitted on these scores), so the test months are never used to select a model.
+  # Versions without this metric were selected another way and are not compared automatically.
+  metric: cal_recall_at_5pct_fpr
 
 # Model used by train.py when --model is not given
 model: lightgbm

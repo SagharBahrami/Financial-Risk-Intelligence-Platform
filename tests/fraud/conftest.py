@@ -71,7 +71,7 @@ def baf_files(raw_baf, fraud_config, tmp_path) -> dict:
     from risk_platform.fraud.ingest import clean
 
     rng = np.random.default_rng(0)
-    rows_per_month = 200
+    rows_per_month = 1000  # enough negatives that a 5% FPR threshold exists after isotonic calibration
     df = raw_baf.sample(8 * rows_per_month, replace=True, random_state=0).reset_index(drop=True)
     df["month"] = np.repeat(np.arange(8), rows_per_month)
     df["income"] = rng.uniform(0, 1, len(df))

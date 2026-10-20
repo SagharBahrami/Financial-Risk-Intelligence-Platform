@@ -1,7 +1,10 @@
-"""Compare a candidate model with the current champion on the same test set, before registering it.
+"""Compare a candidate model with the current champion on the same test set, as a report.
 
 Both models are loaded the way serving loads them (mlflow.pyfunc) and scored on the test months.
-The comparison is logged as its own MLflow run named "evaluate_<candidate run name>".
+Models that carry a decision threshold (metadata "decision_threshold") are also scored on their
+0/1 decisions. The comparison is logged as its own MLflow run named "evaluate_<candidate run name>".
+
+The champion is selected on month 5 (register.py), not with these test results.
 
 Run with:  python -m risk_platform.fraud.evaluate --run-id <training run id>
 """
@@ -13,7 +16,7 @@ import mlflow
 import pandas as pd
 
 from risk_platform.common.config import load_config, resolve_path
-from risk_platform.common.metrics import evaluate_binary
+from risk_platform.common.metrics import evaluate_at_threshold, evaluate_binary
 from risk_platform.common.plots import pr_curve_figure
 from risk_platform.common.registry import CHAMPION, get_champion
 from risk_platform.common.tracking import setup_mlflow
@@ -22,14 +25,23 @@ from risk_platform.fraud.train import split_xy
 logger = logging.getLogger(__name__)
 
 
-def score(model_uri: str, X: pd.DataFrame) -> pd.Series:
-    return mlflow.pyfunc.load_model(model_uri).predict(X)[:, 1]
+def score(model_uri: str, X: pd.DataFrame) -> tuple[pd.Series, float | None]:
+    """Fraud probabilities, and the model's decision threshold (None for models trained without one)."""
+    model = mlflow.pyfunc.load_model(model_uri)
+    threshold = (model.metadata.metadata or {}).get("decision_threshold")
+    return model.predict(X)[:, 1], threshold
+
+
+def evaluate(y: pd.Series, scores: pd.Series, threshold: float | None, max_fpr: float) -> dict[str, float]:
+    metrics = evaluate_binary(y, scores, max_fpr)
+    if threshold is not None:
+        metrics.update(decision_threshold=threshold, **evaluate_at_threshold(y, scores, threshold))
+    return metrics
 
 
 def run(config: dict[str, Any], run_id: str) -> dict[str, dict[str, float]]:
     setup_mlflow(config["mlflow"]["experiment"])
     name = config["registry"]["model_name"]
-    metric = config["registry"]["metric"]
     max_fpr = config["evaluation"]["max_fpr"]
 
     candidate_run = mlflow.get_run(run_id)
@@ -43,7 +55,7 @@ def run(config: dict[str, Any], run_id: str) -> dict[str, dict[str, float]]:
     if champion is not None:
         scores[f"champion (v{champion.version})"] = score(f"models:/{name}@{CHAMPION}", X)
 
-    results = {label: evaluate_binary(y, s, max_fpr) for label, s in scores.items()}
+    results = {label: evaluate(y, s, threshold, max_fpr) for label, (s, threshold) in scores.items()}
     table = pd.DataFrame(results).T
     logger.info("Test set comparison:\n%s", table.round(4).to_string())
 
@@ -57,14 +69,10 @@ def run(config: dict[str, Any], run_id: str) -> dict[str, dict[str, float]]:
             prefix = label.split(" ")[0]  # "candidate" or "champion"
             mlflow.log_metrics({f"{prefix}_{k}": v for k, v in values.items()})
         if champion is not None:
-            candidate_value, champion_value = (v[metric] for v in results.values())
-            mlflow.log_metric(f"delta_{metric}", candidate_value - champion_value)
-            logger.info(
-                "Candidate %s champion on %s (%.4f vs %.4f)",
-                "beats" if candidate_value > champion_value else "does not beat",
-                metric, candidate_value, champion_value,
-            )
-        mlflow.log_figure(pr_curve_figure(y, scores), "pr_curve_comparison.png")
+            candidate, champion_metrics = results.values()
+            shared = candidate.keys() & champion_metrics.keys()
+            mlflow.log_metrics({f"delta_{k}": candidate[k] - champion_metrics[k] for k in shared})
+        mlflow.log_figure(pr_curve_figure(y, {label: s for label, (s, _) in scores.items()}), "pr_curve_comparison.png")
         mlflow.log_text(table.to_csv(), "comparison.csv")
     return results
 

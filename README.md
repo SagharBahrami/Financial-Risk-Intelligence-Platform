@@ -80,10 +80,13 @@ kaggle datasets download ealtman2019/ibm-transactions-for-anti-money-laundering-
   stopped early. Every trial, pruned or not, is logged as a nested MLflow run. The best parameters are
   saved as `best_params.json`, and `train --tune-run-id <id>` refits the model with them.
 - **Train** fits a full scikit-learn pipeline on months 0-4 and then freezes it. On month 5 it fits a
-  probability calibrator (sigmoid / Platt scaling by default, `training.calibration_method` in the config)
-  and picks the decision threshold on the calibrated probabilities: the highest recall with at most 5%
-  false positives. Sigmoid and isotonic calibration are also compared by 5-fold cross-validation on month 5,
-  so the method can be chosen without looking at the test months. The frozen model is then scored once on
+  probability calibrator and picks the decision threshold on the calibrated probabilities: the highest recall
+  with at most 5% false positives. No calibration, sigmoid (Platt scaling) and isotonic calibration are compared by
+  5-fold cross-validation on month 5, so the method can be chosen without looking at the test months
+  (`training.calibration_method: auto` in the config). Auto takes the lowest Brier score among the methods that
+  lose at most 0.005 recall at 5% FPR compared with no calibration (`training.max_recall_loss`), because isotonic
+  calibration gives slightly better probabilities but can lose ranking quality through ties. A method with a
+  negative Brier skill score is never chosen while another method beats the base rate. The frozen model is then scored once on
   months 6-7. MLflow gets the parameters, metrics before and after calibration, a precision-recall curve,
   a calibration curve and the model. Models: `logistic_regression`, `lightgbm`, `xgboost`
   (`src/risk_platform/fraud/models.py`).
@@ -108,13 +111,14 @@ Metrics for imbalanced data: PR-AUC, and recall at 5% false-positive rate (as in
 Random guessing gives a PR-AUC of about 0.014 (the fraud rate). Brier skill score (BSS) compares the
 Brier score with always predicting the fraud rate: 0 = no better, below 0 = worse.
 
-Default hyperparameters, fit on months 0-4, sigmoid calibration and threshold from month 5:
+Default hyperparameters, fit on months 0-4, calibration method chosen automatically on month 5
+(sigmoid for logistic regression and LightGBM, none for XGBoost) and threshold from month 5:
 
 | Model | PR-AUC | ROC-AUC | Recall @ 5% FPR | Brier (before → after) | BSS (before → after) |
 |---|---|---|---|---|---|
 | Logistic regression (baseline) | 0.160 | 0.881 | 0.500 | 0.0970 → 0.0127 | -6.01 → 0.08 |
 | LightGBM | 0.177 | 0.888 | **0.530** | 0.0127 → 0.0127 | 0.08 → 0.08 |
-| XGBoost | 0.183 | 0.887 | 0.527 | 0.0126 → 0.0134 | 0.09 → 0.03 |
+| XGBoost (no calibration) | 0.183 | 0.887 | 0.527 | 0.0126 → 0.0126 | 0.09 → 0.09 |
 
 Decisions with the threshold chosen on month 5:
 
@@ -122,7 +126,7 @@ Decisions with the threshold chosen on month 5:
 |---|---|---|---|---|---|
 | Logistic regression | 0.046 | 0.483 | 0.132 | 0.315 | 4.5% |
 | LightGBM | 0.041 | 0.561 | 0.119 | 0.322 | 5.9% |
-| XGBoost | 0.013 | 0.554 | 0.123 | 0.326 | 5.6% |
+| XGBoost | 0.030 | 0.554 | 0.123 | 0.326 | 5.6% |
 
 What I learned from these runs:
 - Class weights (`class_weight: balanced`) made logistic regression's probabilities far too high
@@ -130,9 +134,46 @@ What I learned from these runs:
 - LightGBM and XGBoost were already close to calibrated. Sigmoid calibration made XGBoost worse;
   the cross-validation on month 5 shows the same (isotonic 0.01057, uncalibrated 0.01060,
   sigmoid 0.01113), so this can be seen without the test months.
-- The threshold for 5% FPR on month 5 gives 5.6-5.9% FPR on the test months for the tree models:
-  the data drifts over time, and production would see the same effect.
+- Isotonic calibration had the best Brier score for all three models on month 5, but the gain was tiny
+  (Brier skill 0.0006-0.0025 better than the next method) and it lost 0.85-1.1 points of recall at 5% FPR and
+  about 0.01 PR-AUC out-of-fold, because it turns different scores into ties. That is why auto selection
+  also checks the ranking instead of using the Brier score alone.
+- The threshold for 5% FPR on month 5 gives 5.6-5.9% FPR on the test months for the tree models.
+  The threshold is chosen on one month, so it is noisy, and the false-positive rate also changes between the
+  two test months. I have not shown that this is drift; production monitoring would have to check it.
 - Training on months 0-4 instead of 0-5 cost little: recall at 5% FPR went from 0.536 to 0.530 (LightGBM).
+
+### Experiment: class weighting for LightGBM and XGBoost (not adopted)
+
+I tested whether weighting the fraud class (`scale_pos_weight`) improves the boosted models.
+The baseline is the pipeline above with no weighting. Only `scale_pos_weight` changed: 1 (baseline),
+about 10 (square root of negatives/positives) and about 99 (full balancing, negatives/positives on months 0-4).
+Data, months, hyperparameters, seed and threshold rule were the same. The runs are in the MLflow
+experiment `fraud_class_weight` and can be repeated with `python -m risk_platform.fraud.class_weight_experiment`.
+
+Recall @ 5% FPR before calibration, so calibration cannot affect it:
+
+| Model | Weight | Month 5 | Test (months 6-7) |
+|---|---|---|---|
+| LightGBM | 1 (baseline) | **0.531** | **0.530** |
+| LightGBM | 10 | 0.519 | 0.520 |
+| LightGBM | 99 | 0.516 | 0.509 |
+| XGBoost | 1 (baseline) | **0.534** | **0.527** |
+| XGBoost | 10 | 0.528 | 0.522 |
+| XGBoost | 99 | 0.520 | 0.484 |
+
+- Ranking got worse as the weight grew, for both models, on month 5 and on the test months.
+  ROC-AUC went down too. PR-AUC on month 5 was slightly higher at weight 10, but this did not carry over to recall.
+- Raw Brier score got much worse (0.011 at weight 1, 0.017 at weight 10, 0.07 at weight 99). After calibration
+  it was back to about 0.0106-0.0108, the same as the baseline, so weighting gained nothing for the probabilities.
+- Weighting changed which calibration method the Brier-only rule picked (LightGBM chose sigmoid instead of isotonic).
+  This makes the recall of the deployed models look better for LightGBM at weight 10, but it comes from the calibration
+  method, not from the weighting. Comparing the uncalibrated ranking removes this.
+- Limits: one seed, one calibration month, and I did not retune the hyperparameters for the weighted models.
+  Differences of about 1 point are close to noise, but the direction was the same for both models and both datasets.
+
+Decision: I keep the unweighted pipeline. Weighting adds a parameter and distorts the raw probabilities
+without improving the ranking.
 
 ## Experiment tracking and model versioning
 

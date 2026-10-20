@@ -28,9 +28,8 @@ def test_evaluate_binary_keys():
     y = np.array([0, 1, 0, 1])
     scores = np.array([0.2, 0.7, 0.4, 0.9])
     metrics = evaluate_binary(y, scores, max_fpr=0.05)
-    assert set(metrics) == {
-        "pr_auc", "roc_auc", "brier", "brier_skill", "recall_at_5pct_fpr", "threshold_at_5pct_fpr",
-    }
+    # No threshold: the best threshold for the evaluation data is not one a deployed model would use
+    assert set(metrics) == {"pr_auc", "roc_auc", "brier", "brier_skill", "recall_at_5pct_fpr"}
 
 
 def test_brier_skill_is_zero_for_base_rate_model():

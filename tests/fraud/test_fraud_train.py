@@ -32,15 +32,37 @@ def test_train_logs_metrics_before_and_after_calibration(baf_files, mlflow_runs,
 
     assert set(REPORTED) <= set(metrics)
     logged = last_run(model_name)
-    for name in ["decision_threshold", "cal_brier", "cal_uncalibrated_brier", "cv_sigmoid_brier", "cv_isotonic_brier"]:
+    for name in ["decision_threshold", baf_files["registry"]["metric"], "cal_brier",
+                 "cv_none_brier", "cv_sigmoid_brier", "cv_isotonic_brier"]:
         assert not np.isnan(logged[f"metrics.{name}"])
     assert logged["params.fit_months"] == "[0, 1, 2, 3, 4]"
     assert logged["params.calibration_months"] == "[5]"
+    assert "threshold_at_5pct_fpr" not in metrics  # no threshold is chosen on the test months
 
 
-def test_threshold_respects_fpr_limit_on_calibration_month(baf_files, mlflow_runs):
+def test_auto_calibration_picks_lowest_brier_among_methods_that_keep_the_ranking(baf_files, mlflow_runs):
     train.run(baf_files, "lightgbm")
-    assert last_run("lightgbm")["metrics.cal_fpr_at_threshold"] <= baf_files["evaluation"]["max_fpr"]
+    logged = last_run("lightgbm")
+    methods = baf_files["training"]["compare_methods"]
+    recall = {m: logged[f"metrics.cv_{m}_recall_at_5pct_fpr"] for m in methods}
+    brier = {m: logged[f"metrics.cv_{m}_brier"] for m in methods}
+    skill = {m: logged[f"metrics.cv_{m}_brier_skill"] for m in methods}
+    allowed = [m for m in methods
+               if recall[m] >= recall["none"] - baf_files["training"]["max_recall_loss"] and skill[m] >= 0]
+    assert logged["params.calibration_setting"] == "auto"
+    assert logged["params.calibration_method"] == min(allowed, key=brier.get)
+
+
+@pytest.mark.parametrize("method", ["none", "sigmoid", "isotonic"])
+def test_threshold_respects_fpr_limit_on_calibration_month(baf_files, mlflow_runs, method):
+    baf_files["training"]["calibration_method"] = method
+    train.run(baf_files, "lightgbm")
+    model = mlflow.sklearn.load_model(last_run("lightgbm")["tags.model_uri"])
+
+    df = pd.read_parquet(baf_files["data"]["train_path"])
+    X_cal, y_cal = split_xy(df[df["month"].isin(baf_files["training"]["calibration_months"])], baf_files)
+    flagged = model.predict(X_cal) == 1
+    assert (flagged & (y_cal == 0)).sum() / (y_cal == 0).sum() <= baf_files["evaluation"]["max_fpr"]
 
 
 def test_served_model_is_calibrated_and_carries_its_threshold(baf_files, mlflow_runs):
