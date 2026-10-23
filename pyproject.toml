@@ -11,6 +11,7 @@ dependencies = [
     "pandera>=0.24",
     "pyyaml>=6.0",
     "scikit-learn>=1.6",  # FrozenEstimator
+    "scipy>=1.11",  # statistical tests and distributions (common/drift.py)
     "mlflow>=3.0",
     "skops>=0.10",  # safe model files for MLflow (see common/tracking.py)
     "lightgbm>=4.0",

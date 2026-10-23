@@ -17,3 +17,6 @@ access_token
 mlflow.db
 mlruns/
 mlartifacts/
+
+# Monitoring reports (generated, see README)
+reports/monitoring/
